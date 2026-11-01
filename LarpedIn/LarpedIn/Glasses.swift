@@ -31,17 +31,33 @@ import Observation
     @ObservationIgnored private var inputs: Inputs?
     @ObservationIgnored private var stream: MWDATCamera.Stream?
     @ObservationIgnored private var inputTask: Task<Void, Never>?
+    @ObservationIgnored private var autoStartTask: Task<Void, Never>?
 
     init() {
         Task {
             for await state in Wearables.shared.registrationStateStream() {
+                let wasRegistered = isRegistered
                 isRegistered = state == .registered
+                if isRegistered, !wasRegistered { autoStart() }
             }
         }
         Task {
             for await device in deviceSelector.activeDeviceStream() {
+                let hadDevice = hasDevice
                 hasDevice = device != nil
+                if hasDevice, !hadDevice { autoStart() }
             }
+        }
+    }
+
+    /// Starts streaming when the glasses connect (or registration finishes with them
+    /// connected). Only fires on those transitions, so Stop sticks until the glasses
+    /// reconnect and a failed start doesn't retry in a loop.
+    private func autoStart() {
+        guard isRegistered, hasDevice, !isStreaming, autoStartTask == nil else { return }
+        autoStartTask = Task {
+            await start()
+            autoStartTask = nil
         }
     }
 
