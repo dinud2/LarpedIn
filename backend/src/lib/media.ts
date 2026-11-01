@@ -9,7 +9,7 @@ const run = promisify(execFile);
 /** Pulls `count` evenly spaced JPEG frames out of the video, as base64. */
 export async function extractFrames(
 	videoPath: string,
-	count = 8,
+	count = 16,
 ): Promise<string[]> {
 	const { stdout } = await run("ffprobe", [
 		"-v",
@@ -31,9 +31,9 @@ export async function extractFrames(
 			"error",
 			"-i",
 			videoPath,
-			// 768px wide keeps the images legible without burning vision tokens.
+			// Cap at 768px wide (never upscale) to keep vision tokens in check.
 			"-vf",
-			`fps=${count / duration},scale=768:-2`,
+			`fps=${count / duration},scale='min(768,iw)':-2`,
 			"-frames:v",
 			String(count),
 			"-q:v",

@@ -81,13 +81,15 @@ export const Route = createFileRoute("/api/clip")({
 						}),
 					]);
 					log.info("analyzing frames and transcript");
-					const post = await writePost(frames, transcript);
-					log.info(`post written (${post.length} chars), done`);
+					const { post, frameIndex } = await writePost(frames, transcript);
+					log.info(
+						`post written (${post.length} chars), using frame ${frameIndex + 1}/${frames.length}, done`,
+					);
 					return Response.json({
 						post,
 						transcript,
-						// Middle frame as a ready-made image for the post.
-						image: `data:image/jpeg;base64,${frames[Math.floor(frames.length / 2)]}`,
+						// The frame the model picked as the post's image.
+						image: `data:image/jpeg;base64,${frames[frameIndex]}`,
 					});
 				} catch (error) {
 					log.error("processing failed", error);

@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { env } from "#/env";
 import { chat } from "#/lib/openrouter";
 
@@ -13,23 +14,37 @@ Style:
 - End with an engagement-bait question and 3-5 hashtags.
 - Under 200 words. Plain text only, no markdown.
 
-Reply with only the post.`;
+Also pick the single frame that would make the best image for the post: sharp, well framed, showing the moment. Avoid blurry, dark, or mid-motion frames.
 
-export function writePost(
+Reply with only JSON: {"post": "<the post>", "frame": <frame number>}`;
+
+const Reply = z.object({ post: z.string(), frame: z.number().int() });
+
+/** Writes the post and picks which frame (0-based index) to use as its image. */
+export async function writePost(
 	frames: string[],
 	transcript: string,
-): Promise<string> {
-	return chat(env.OPENROUTER_MODEL, [
+): Promise<{ post: string; frameIndex: number }> {
+	const reply = await chat(env.OPENROUTER_MODEL, [
 		{ role: "system", content: SYSTEM_PROMPT },
 		{
 			role: "user",
 			content: [
 				{ type: "text", text: `Transcript: ${transcript || "(nothing said)"}` },
-				...frames.map((f) => ({
-					type: "image_url",
-					image_url: { url: `data:image/jpeg;base64,${f}` },
-				})),
+				...frames.flatMap((f, i) => [
+					{ type: "text", text: `Frame ${i + 1}:` },
+					{
+						type: "image_url",
+						image_url: { url: `data:image/jpeg;base64,${f}` },
+					},
+				]),
 			],
 		},
 	]);
+	// Models sometimes wrap JSON in a code fence; take the outermost object.
+	const { post, frame } = Reply.parse(
+		JSON.parse(reply.slice(reply.indexOf("{"), reply.lastIndexOf("}") + 1)),
+	);
+	const frameIndex = Math.min(Math.max(frame - 1, 0), frames.length - 1);
+	return { post: post.trim(), frameIndex };
 }
