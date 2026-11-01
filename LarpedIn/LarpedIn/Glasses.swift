@@ -74,6 +74,9 @@ import Observation
                     return
                 }
             }
+            // Audio is optional: without the mic permission we still stream video.
+            var hasMic = (try? await wearables.checkPermissionStatus(.microphone)) == .granted
+            if !hasMic { hasMic = (try? await wearables.requestPermission(.microphone)) == .granted }
             status = "Connecting…"
             streamError = ""
             let session = try wearables.createSession(deviceSelector: deviceSelector)
@@ -90,8 +93,14 @@ import Observation
             for await state in session.stateStream() where state == .started { break }
 
             // hvc1 keeps frames compressed (cheap to buffer, written to mp4 as-is) and
-            // keeps streaming while the app is backgrounded, unlike raw.
-            let config = StreamConfiguration(videoCodec: .hvc1, resolution: .low, frameRate: 24)
+            // keeps streaming while the app is backgrounded, unlike raw. 16kHz mono is
+            // plenty for speech and barely costs Bluetooth bandwidth.
+            let config = StreamConfiguration(
+                videoCodec: .hvc1,
+                audioCodec: hasMic ? .pcm(sampleRate: .rate16000, numberOfChannels: 1) : nil,
+                resolution: .low,
+                frameRate: 24
+            )
             guard let camera = try session.addCamera(config: config) else {
                 status = "Couldn't attach camera"
                 return stop()
@@ -107,6 +116,9 @@ import Observation
                     self.frameCount += 1
                     if let image { self.previewImage = image }
                 }
+            }.store(in: tokens)
+            camera.stream.audioFramePublisher.listen { frame in
+                buffer.appendAudio(frame.pcmBuffer, pts: frame.presentationTimeStamp)
             }.store(in: tokens)
             var wasStreaming = false
             camera.stream.statePublisher.listen { state in
@@ -161,11 +173,12 @@ import Observation
 
     func clip() async {
         do {
-            let file = try await buffer.writeClip()
+            lastResult = "Writing clip…"
+            let (file, hasAudio) = try await buffer.writeClip()
             defer { try? FileManager.default.removeItem(at: file) }
-            await upload(try Data(contentsOf: file), contentType: "video/mp4", label: "clip")
+            await upload(try Data(contentsOf: file), contentType: "video/mp4", label: hasAudio ? "clip" : "clip (no audio)")
         } catch {
-            lastResult = "Clip failed: \(error.localizedDescription)"
+            lastResult = "Clip failed: \(error)"
         }
     }
 
