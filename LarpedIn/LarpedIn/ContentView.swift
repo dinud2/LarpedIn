@@ -3,7 +3,6 @@ import SwiftUI
 struct ContentView: View {
     @State private var glasses = Glasses()
     @AppStorage("endpoint") private var endpoint = ""
-    @AppStorage("forwardURL") private var forwardURL = ""
     @AppStorage("useGlassesButton") private var useGlassesButton = true
 
     var body: some View {
@@ -30,12 +29,6 @@ struct ContentView: View {
             }
 
             TextField("Server URL, e.g. https://example.com", text: $endpoint)
-                .textFieldStyle(.roundedBorder)
-                .keyboardType(.URL)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-
-            TextField("Forward response to (optional, e.g. webhook.site)", text: $forwardURL)
                 .textFieldStyle(.roundedBorder)
                 .keyboardType(.URL)
                 .textInputAutocapitalization(.never)
