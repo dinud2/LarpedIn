@@ -2,6 +2,12 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFileRoute } from "@tanstack/react-router";
+import {
+	createLinkedInDraft,
+	draftErrorResponse,
+	getLinkedInDraft,
+	publishLinkedInDraft,
+} from "#/lib/linkedin";
 import { extractAudio, extractFrames } from "#/lib/media";
 import { writePost } from "#/lib/post";
 import { transcribe } from "#/lib/transcribe";
@@ -46,11 +52,27 @@ export const Route = createFileRoute("/api/clip")({
 						extractAudio(path).then((mp3) => (mp3 ? transcribe(mp3) : "")),
 					]);
 					const post = await writePost(frames, transcript);
+					if (!frames.length) throw new Error("No video frames were decoded");
+					const image = `data:image/jpeg;base64,${frames[Math.floor(frames.length / 2)]}`;
+					let draft = await createLinkedInDraft({ post, image });
+					let publishError: string | undefined;
+					if (process.env.LINKEDIN_AUTO_PUBLISH === "true") {
+						try {
+							draft = await publishLinkedInDraft(draft.id);
+						} catch (error) {
+							const response = draftErrorResponse(error);
+							publishError = (await response.json()).error;
+							draft = await getLinkedInDraft(draft.id);
+							// Return the generated text and saved draft even if LinkedIn fails.
+						}
+					}
 					return Response.json({
 						post,
 						transcript,
 						// Middle frame as a ready-made image for the post.
-						image: `data:image/jpeg;base64,${frames[Math.floor(frames.length / 2)]}`,
+						image,
+						draft,
+						publish_error: publishError,
 					});
 				} catch (error) {
 					console.error("clip processing failed", error);

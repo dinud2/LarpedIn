@@ -11,6 +11,9 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as ApiClipRouteImport } from './routes/api/clip'
 import { Route as ApiHealthRouteImport } from './routes/api/health'
+import { Route as ApiLinkedinDraftRouteImport } from './routes/api/linkedin/draft'
+import { Route as ApiLinkedinPostRouteImport } from './routes/api/linkedin/post'
+import { Route as ApiLinkedinPrepareRouteImport } from './routes/api/linkedin/prepare'
 
 const ApiClipRoute = ApiClipRouteImport.update({
   id: '/api/clip',
@@ -22,31 +25,74 @@ const ApiHealthRoute = ApiHealthRouteImport.update({
   path: '/api/health',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiLinkedinDraftRoute = ApiLinkedinDraftRouteImport.update({
+  id: '/api/linkedin/draft',
+  path: '/api/linkedin/draft',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiLinkedinPostRoute = ApiLinkedinPostRouteImport.update({
+  id: '/api/linkedin/post',
+  path: '/api/linkedin/post',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiLinkedinPrepareRoute = ApiLinkedinPrepareRouteImport.update({
+  id: '/api/linkedin/prepare',
+  path: '/api/linkedin/prepare',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/api/clip': typeof ApiClipRoute
   '/api/health': typeof ApiHealthRoute
+  '/api/linkedin/draft': typeof ApiLinkedinDraftRoute
+  '/api/linkedin/post': typeof ApiLinkedinPostRoute
+  '/api/linkedin/prepare': typeof ApiLinkedinPrepareRoute
 }
 export interface FileRoutesByTo {
   '/api/clip': typeof ApiClipRoute
   '/api/health': typeof ApiHealthRoute
+  '/api/linkedin/draft': typeof ApiLinkedinDraftRoute
+  '/api/linkedin/post': typeof ApiLinkedinPostRoute
+  '/api/linkedin/prepare': typeof ApiLinkedinPrepareRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/api/clip': typeof ApiClipRoute
   '/api/health': typeof ApiHealthRoute
+  '/api/linkedin/draft': typeof ApiLinkedinDraftRoute
+  '/api/linkedin/post': typeof ApiLinkedinPostRoute
+  '/api/linkedin/prepare': typeof ApiLinkedinPrepareRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/api/clip' | '/api/health'
+  fullPaths:
+    | '/api/clip'
+    | '/api/health'
+    | '/api/linkedin/draft'
+    | '/api/linkedin/post'
+    | '/api/linkedin/prepare'
   fileRoutesByTo: FileRoutesByTo
-  to: '/api/clip' | '/api/health'
-  id: '__root__' | '/api/clip' | '/api/health'
+  to:
+    | '/api/clip'
+    | '/api/health'
+    | '/api/linkedin/draft'
+    | '/api/linkedin/post'
+    | '/api/linkedin/prepare'
+  id:
+    | '__root__'
+    | '/api/clip'
+    | '/api/health'
+    | '/api/linkedin/draft'
+    | '/api/linkedin/post'
+    | '/api/linkedin/prepare'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   ApiClipRoute: typeof ApiClipRoute
   ApiHealthRoute: typeof ApiHealthRoute
+  ApiLinkedinDraftRoute: typeof ApiLinkedinDraftRoute
+  ApiLinkedinPostRoute: typeof ApiLinkedinPostRoute
+  ApiLinkedinPrepareRoute: typeof ApiLinkedinPrepareRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -65,12 +111,36 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiHealthRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/linkedin/draft': {
+      id: '/api/linkedin/draft'
+      path: '/api/linkedin/draft'
+      fullPath: '/api/linkedin/draft'
+      preLoaderRoute: typeof ApiLinkedinDraftRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/linkedin/post': {
+      id: '/api/linkedin/post'
+      path: '/api/linkedin/post'
+      fullPath: '/api/linkedin/post'
+      preLoaderRoute: typeof ApiLinkedinPostRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/linkedin/prepare': {
+      id: '/api/linkedin/prepare'
+      path: '/api/linkedin/prepare'
+      fullPath: '/api/linkedin/prepare'
+      preLoaderRoute: typeof ApiLinkedinPrepareRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   ApiClipRoute: ApiClipRoute,
   ApiHealthRoute: ApiHealthRoute,
+  ApiLinkedinDraftRoute: ApiLinkedinDraftRoute,
+  ApiLinkedinPostRoute: ApiLinkedinPostRoute,
+  ApiLinkedinPrepareRoute: ApiLinkedinPrepareRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
