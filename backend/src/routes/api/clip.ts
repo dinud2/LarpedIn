@@ -8,6 +8,18 @@ import { transcribe } from "#/lib/transcribe";
 
 const MAX_BYTES = 50 * 1024 * 1024;
 
+/** Per-request logger: `[clip a1b2c3d4 +1234ms] message`. Logs sizes, not content. */
+function clipLogger() {
+	const id = crypto.randomUUID().slice(0, 8);
+	const start = Date.now();
+	const prefix = () => `[clip ${id} +${Date.now() - start}ms]`;
+	return {
+		info: (message: string) => console.log(prefix(), message),
+		error: (message: string, error: unknown) =>
+			console.error(prefix(), message, error),
+	};
+}
+
 /** Accepts either multipart (`file` field) or a raw `video/mp4` body, which is what the iOS app sends. */
 async function readVideo(request: Request): Promise<Blob | Response> {
 	const type = request.headers.get("content-type") ?? "";
@@ -34,18 +46,43 @@ export const Route = createFileRoute("/api/clip")({
 	server: {
 		handlers: {
 			POST: async ({ request }) => {
+				const log = clipLogger();
+				log.info(
+					`request received (${request.headers.get("content-type")?.split(";")[0] ?? "no content-type"})`,
+				);
 				const video = await readVideo(request);
-				if (video instanceof Response) return video;
+				if (video instanceof Response) {
+					log.info(`rejected with ${video.status}`);
+					return video;
+				}
+				log.info(`video received (${(video.size / 1024).toFixed(0)} KB)`);
 
 				const dir = await mkdtemp(join(tmpdir(), "clip-"));
 				try {
 					const path = join(dir, "clip.mp4");
 					await writeFile(path, Buffer.from(await video.arrayBuffer()));
+					log.info("processing video");
 					const [frames, transcript] = await Promise.all([
-						extractFrames(path),
-						extractAudio(path).then((mp3) => (mp3 ? transcribe(mp3) : "")),
+						extractFrames(path).then((frames) => {
+							log.info(`extracted ${frames.length} frames`);
+							return frames;
+						}),
+						extractAudio(path).then(async (mp3) => {
+							if (!mp3) {
+								log.info("no audio track, skipping transcription");
+								return "";
+							}
+							log.info(
+								`extracted audio (${((mp3.length * 3) / 4 / 1024).toFixed(0)} KB mp3), transcribing`,
+							);
+							const text = await transcribe(mp3);
+							log.info(`transcribed (${text.length} chars)`);
+							return text;
+						}),
 					]);
+					log.info("analyzing frames and transcript");
 					const post = await writePost(frames, transcript);
+					log.info(`post written (${post.length} chars), done`);
 					return Response.json({
 						post,
 						transcript,
@@ -53,7 +90,7 @@ export const Route = createFileRoute("/api/clip")({
 						image: `data:image/jpeg;base64,${frames[Math.floor(frames.length / 2)]}`,
 					});
 				} catch (error) {
-					console.error("clip processing failed", error);
+					log.error("processing failed", error);
 					return Response.json({ error: "Processing failed" }, { status: 502 });
 				} finally {
 					await rm(dir, { recursive: true, force: true });
