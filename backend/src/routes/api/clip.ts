@@ -98,9 +98,12 @@ export const Route = createFileRoute("/api/clip")({
 					log.info(`saved linkedin draft ${draft.id}`);
 					let publishError: string | undefined;
 					if (process.env.LINKEDIN_AUTO_PUBLISH === "true") {
-						log.info("publishing to linkedin");
+						log.info("publishing to linkedin (text only)");
 						try {
-							draft = await publishLinkedInDraft(draft.id);
+							// Text-only for now; the image stays on the saved draft.
+							draft = await publishLinkedInDraft(draft.id, {
+								withImage: false,
+							});
 							log.info(
 								`published to linkedin: ${draft.post_url ?? draft.status}`,
 							);
