@@ -177,11 +177,14 @@ interface PrepareOptions extends DraftOptions {
 	author?: string;
 	version?: string;
 	fetcher?: typeof fetch;
-	/** Publish with the draft's photo (default) or as a text-only post. */
-	withImage?: boolean;
 }
 
-function credentials(options: PrepareOptions) {
+/** Uploads the draft's photo ONLY. There is intentionally no Posts API create call. */
+export async function prepareLinkedInMedia(
+	id: string,
+	options: PrepareOptions = {},
+): Promise<LinkedInDraft> {
+	const draft = await getLinkedInDraft(id, options);
 	const token = options.token ?? process.env.LINKEDIN_ACCESS_TOKEN;
 	const author = options.author ?? process.env.LINKEDIN_AUTHOR_URN;
 	const version =
@@ -197,16 +200,6 @@ function credentials(options: PrepareOptions) {
 	) {
 		throw new DraftError("Invalid LinkedIn author URN or API version", 503);
 	}
-	return { token, author, version };
-}
-
-/** Uploads the draft's photo ONLY. There is intentionally no Posts API create call. */
-export async function prepareLinkedInMedia(
-	id: string,
-	options: PrepareOptions = {},
-): Promise<LinkedInDraft> {
-	const draft = await getLinkedInDraft(id, options);
-	const { token, author, version } = credentials(options);
 	if (draft.linkedin?.author === author) return draft;
 	const fetcher = options.fetcher ?? fetch;
 	const headers = {
@@ -308,19 +301,11 @@ export async function publishLinkedInDraft(
 				409,
 			);
 		}
-		const { token, author, version } = credentials(options);
-		let postFields: object;
-		if (options.withImage === false) {
-			postFields = {
-				author,
-				commentary: escapeCommentary(draft.post),
-				visibility: "PUBLIC",
-			};
-		} else {
-			draft = await prepareLinkedInMedia(id, options);
-			if (!draft.linkedin) throw new DraftError("Prepare the image first", 503);
-			postFields = draft.linkedin.post_fields;
-		}
+		draft = await prepareLinkedInMedia(id, options);
+		const token = options.token ?? process.env.LINKEDIN_ACCESS_TOKEN;
+		const version =
+			options.version ?? process.env.LINKEDIN_API_VERSION ?? "202610";
+		if (!draft.linkedin) throw new DraftError("Prepare the image first", 503);
 		draft.status = "publishing";
 		await save(draft, options);
 		let response: Response;
@@ -336,7 +321,7 @@ export async function publishLinkedInDraft(
 						"X-Restli-Protocol-Version": "2.0.0",
 					},
 					body: JSON.stringify({
-						...postFields,
+						...draft.linkedin.post_fields,
 						lifecycleState: "PUBLISHED",
 						distribution: {
 							feedDistribution: "MAIN_FEED",

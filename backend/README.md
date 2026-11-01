@@ -47,9 +47,8 @@ Point Render (Docker runtime) or Railway at this repo with root directory `backe
 ## LinkedIn publishing
 
 After writing the post, `/api/clip` saves it with the picked frame as a local draft
-(`draft` in the response). With `LINKEDIN_AUTO_PUBLISH=true` it then publishes a
-text-only post with `POST /rest/posts` (the frame stays on the saved draft; pass
-`withImage: true` to `publishLinkedInDraft` to upload it through the Images API again). `draft.post_url`
+(`draft` in the response). With `LINKEDIN_AUTO_PUBLISH=true` it then uploads the image
+through LinkedIn's Images API and publishes with `POST /rest/posts`. `draft.post_url`
 links to the live post. If publishing fails, the response still has the post, the
 saved draft and `publish_error`.
 
