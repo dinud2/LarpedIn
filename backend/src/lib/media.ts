@@ -49,3 +49,45 @@ export async function extractFrames(
 		await rm(dir, { recursive: true, force: true });
 	}
 }
+
+/**
+ * Pulls the audio track out as a small mono mp3 (base64), or null if the clip has
+ * no audio, e.g. when the glasses mic permission wasn't granted.
+ */
+export async function extractAudio(videoPath: string): Promise<string | null> {
+	const { stdout } = await run("ffprobe", [
+		"-v",
+		"error",
+		"-select_streams",
+		"a",
+		"-show_entries",
+		"stream=index",
+		"-of",
+		"csv=p=0",
+		videoPath,
+	]);
+	if (!stdout.trim()) return null;
+
+	const dir = await mkdtemp(join(tmpdir(), "audio-"));
+	try {
+		const out = join(dir, "audio.mp3");
+		// 16kHz mono is all speech needs and keeps the upload tiny.
+		await run("ffmpeg", [
+			"-v",
+			"error",
+			"-i",
+			videoPath,
+			"-vn",
+			"-ac",
+			"1",
+			"-ar",
+			"16000",
+			"-b:a",
+			"32k",
+			out,
+		]);
+		return (await readFile(out)).toString("base64");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+}

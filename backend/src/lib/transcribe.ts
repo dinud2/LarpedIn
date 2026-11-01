@@ -1,19 +1,19 @@
-import { z } from "zod";
 import { env } from "#/env";
+import { chat } from "#/lib/openrouter";
 
-const Transcript = z.object({ text: z.string() });
-
-/** ElevenLabs Scribe accepts the mp4 directly, so no audio extraction step. */
-export async function transcribe(video: Blob): Promise<string> {
-	const form = new FormData();
-	form.append("model_id", "scribe_v2");
-	form.append("file", video, "clip.mp4");
-
-	const res = await fetch("https://api.elevenlabs.io/v1/speech-to-text", {
-		method: "POST",
-		headers: { "xi-api-key": env.ELEVENLABS_API_KEY },
-		body: form,
-	});
-	if (!res.ok) throw new Error(`ElevenLabs ${res.status}: ${await res.text()}`);
-	return Transcript.parse(await res.json()).text.trim();
+/** Transcribes a base64 mp3 with an audio-capable OpenRouter model (Claude can't take audio). */
+export async function transcribe(mp3: string): Promise<string> {
+	const text = await chat(env.OPENROUTER_TRANSCRIBE_MODEL, [
+		{
+			role: "user",
+			content: [
+				{
+					type: "text",
+					text: "Transcribe the speech in this audio verbatim. Reply with only the transcript, or NONE if nobody speaks.",
+				},
+				{ type: "input_audio", input_audio: { data: mp3, format: "mp3" } },
+			],
+		},
+	]);
+	return text === "NONE" ? "" : text;
 }

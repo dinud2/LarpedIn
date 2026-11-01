@@ -5,7 +5,8 @@ import { z } from "zod";
 export const env = z
 	.object({
 		OPENROUTER_API_KEY: z.string().min(1),
-		ELEVENLABS_API_KEY: z.string().min(1),
 		OPENROUTER_MODEL: z.string().default("anthropic/claude-sonnet-5.5"),
+		// Must accept audio input, which Claude doesn't.
+		OPENROUTER_TRANSCRIBE_MODEL: z.string().default("google/gemini-3.8-flash"),
 	})
 	.parse(process.env);

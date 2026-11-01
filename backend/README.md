@@ -11,7 +11,7 @@ Turns a glasses clip into a LinkedIn post. TanStack Start API routes, built with
   { "post": "...", "transcript": "...", "image": "data:image/jpeg;base64,..." }
   ```
 
-  Pipeline: ffmpeg pulls 8 frames and ElevenLabs Scribe transcribes the mp4 (in parallel), then the frames and transcript go to an OpenRouter model. `image` is the middle frame.
+  Pipeline: ffmpeg pulls 8 frames and a mono mp3. The mp3 goes to an audio-capable OpenRouter model for the transcript (in parallel with frame extraction), then the frames and transcript go to the post model. `image` is the middle frame.
 
 ```sh
 curl -F file=@clip.mp4 http://localhost:3000/api/clip
@@ -22,8 +22,8 @@ curl -F file=@clip.mp4 http://localhost:3000/api/clip
 | Var | |
 |---|---|
 | `OPENROUTER_API_KEY` | required |
-| `ELEVENLABS_API_KEY` | required |
-| `OPENROUTER_MODEL` | optional, default `anthropic/claude-sonnet-5.5` |
+| `OPENROUTER_MODEL` | optional, writes the post, default `anthropic/claude-sonnet-5.5` |
+| `OPENROUTER_TRANSCRIBE_MODEL` | optional, must accept audio, default `google/gemini-3.8-flash` |
 | `PORT` | set by Render/Railway |
 
 ## Run

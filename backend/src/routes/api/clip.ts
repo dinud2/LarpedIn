@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFileRoute } from "@tanstack/react-router";
-import { extractFrames } from "#/lib/frames";
+import { extractAudio, extractFrames } from "#/lib/media";
 import { writePost } from "#/lib/post";
 import { transcribe } from "#/lib/transcribe";
 
@@ -43,7 +43,7 @@ export const Route = createFileRoute("/api/clip")({
 					await writeFile(path, Buffer.from(await video.arrayBuffer()));
 					const [frames, transcript] = await Promise.all([
 						extractFrames(path),
-						transcribe(video),
+						extractAudio(path).then((mp3) => (mp3 ? transcribe(mp3) : "")),
 					]);
 					const post = await writePost(frames, transcript);
 					return Response.json({
