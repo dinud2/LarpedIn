@@ -2,24 +2,22 @@
 // turn it into a LinkedIn thought-leadership post saved as a .txt file.
 //
 //   clip.mp4 ─┬─ ffmpeg ──────────────> still frames ─┐
-//             └─ ElevenLabs Scribe ───> transcript ───┴─> Claude ─> posts/<id>.txt
+//             └─ ElevenLabs Scribe ───> transcript ───┴─> Claude (via OpenRouter) ─> posts/<id>.txt
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import Anthropic from "@anthropic-ai/sdk";
 import express from "express";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const POSTS_DIR = path.resolve(process.env.POSTS_DIR ?? "posts");
 const FFMPEG = process.env.FFMPEG_PATH ?? "ffmpeg"; // installed by the Dockerfile on Render
-const MODEL = "claude-opus-5-5";
+const MODEL = process.env.OPENROUTER_MODEL ?? "anthropic/claude-opus-5.5";
 const FRAME_COUNT = 4;
 
 const run = promisify(execFile);
-const anthropic = new Anthropic(); // reads ANTHROPIC_API_KEY
 
 // ── 3a. Pull evenly spaced still frames out of the clip ──────────────────────
 async function extractFrames(videoPath, workDir) {
@@ -84,38 +82,45 @@ Work out the mundane thing that just happened, then write a post that:
 If the transcript contains something funny the person said, work it in. Reply with only the post, in plain text (no markdown). This is satire for a parody site.`;
 
 async function writePost(frames, transcript) {
-  const response = await anthropic.beta.messages.create({
-    model: MODEL,
-    max_tokens: 16000,
-    output_config: { effort: "medium" },
-    // If the model declines, the API retries on a fallback model in the same call.
-    betas: ["server-side-fallback-2026-07-01"],
-    fallbacks: "default",
-    system: SYSTEM,
-    messages: [
-      {
-        role: "user",
-        content: [
-          ...frames.map((frame) => ({
-            type: "image",
-            source: { type: "base64", media_type: "image/jpeg", data: frame.toString("base64") },
-          })),
-          {
-            type: "text",
-            text: transcript
-              ? `Transcript of the clip: "${transcript}"`
-              : "There was no speech in the clip.",
-          },
-        ],
-      },
-    ],
+  if (!process.env.OPENROUTER_API_KEY) throw new Error("OPENROUTER_API_KEY is not set");
+  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+      "Content-Type": "application/json",
+      "X-Title": "LarpedIn",
+    },
+    body: JSON.stringify({
+      model: MODEL,
+      max_tokens: 16000,
+      messages: [
+        { role: "system", content: SYSTEM },
+        {
+          role: "user",
+          content: [
+            ...frames.map((frame) => ({
+              type: "image_url",
+              image_url: { url: `data:image/jpeg;base64,${frame.toString("base64")}` },
+            })),
+            {
+              type: "text",
+              text: transcript
+                ? `Transcript of the clip: "${transcript}"`
+                : "There was no speech in the clip.",
+            },
+          ],
+        },
+      ],
+    }),
+    signal: AbortSignal.timeout(120_000),
   });
-  if (response.stop_reason === "refusal") throw new Error("Claude declined to write this post");
-  const post = response.content
-    .flatMap((block) => (block.type === "text" ? [block.text] : []))
-    .join("")
-    .trim();
-  if (!post) throw new Error(`Empty post (stop_reason: ${response.stop_reason})`);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || body.error) {
+    throw new Error(`OpenRouter ${res.status}: ${body.error?.message ?? JSON.stringify(body)}`);
+  }
+  const choice = body.choices?.[0];
+  const post = (choice?.message?.content ?? "").trim();
+  if (!post) throw new Error(`Empty post (finish_reason: ${choice?.finish_reason})`);
   return post;
 }
 

@@ -7,7 +7,7 @@ services:
     healthCheckPath: /healthz
     plan: starter # free plan sleeps after ~15 idle minutes; don't demo on it
     envVars:
-      - key: ANTHROPIC_API_KEY
+      - key: OPENROUTER_API_KEY
         sync: false
       - key: ELEVENLABS_API_KEY
         sync: false
