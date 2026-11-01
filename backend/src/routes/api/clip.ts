@@ -2,6 +2,12 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFileRoute } from "@tanstack/react-router";
+import {
+	createLinkedInDraft,
+	draftErrorResponse,
+	getLinkedInDraft,
+	publishLinkedInDraft,
+} from "#/lib/linkedin";
 import { extractAudio, extractFrames } from "#/lib/media";
 import { writePost } from "#/lib/post";
 import { transcribe } from "#/lib/transcribe";
@@ -80,16 +86,39 @@ export const Route = createFileRoute("/api/clip")({
 							return text;
 						}),
 					]);
+					if (!frames.length) throw new Error("No video frames were decoded");
 					log.info("analyzing frames and transcript");
 					const { post, frameIndex } = await writePost(frames, transcript);
 					log.info(
-						`post written (${post.length} chars), using frame ${frameIndex + 1}/${frames.length}, done`,
+						`post written (${post.length} chars), using frame ${frameIndex + 1}/${frames.length}`,
 					);
+					// The frame the model picked as the post's image.
+					const image = `data:image/jpeg;base64,${frames[frameIndex]}`;
+					let draft = await createLinkedInDraft({ post, image });
+					log.info(`saved linkedin draft ${draft.id}`);
+					let publishError: string | undefined;
+					if (process.env.LINKEDIN_AUTO_PUBLISH === "true") {
+						log.info("publishing to linkedin");
+						try {
+							draft = await publishLinkedInDraft(draft.id);
+							log.info(
+								`published to linkedin: ${draft.post_url ?? draft.status}`,
+							);
+						} catch (error) {
+							const response = draftErrorResponse(error);
+							publishError = (await response.json()).error;
+							draft = await getLinkedInDraft(draft.id);
+							// Return the generated text and saved draft even if LinkedIn fails.
+							log.info(`linkedin publish failed, draft kept: ${publishError}`);
+						}
+					}
+					log.info("done");
 					return Response.json({
 						post,
 						transcript,
-						// The frame the model picked as the post's image.
-						image: `data:image/jpeg;base64,${frames[frameIndex]}`,
+						image,
+						draft,
+						publish_error: publishError,
 					});
 				} catch (error) {
 					log.error("processing failed", error);

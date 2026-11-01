@@ -6,6 +6,7 @@
     "#/*": "./src/*"
   },
   "scripts": {
+    "test:linkedin": "node --experimental-strip-types --test src/lib/linkedin.test.mjs",
     "dev": "vite dev --port 3000",
     "generate-routes": "tsr generate",
     "build": "vite build",
