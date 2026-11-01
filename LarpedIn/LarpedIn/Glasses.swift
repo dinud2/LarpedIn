@@ -19,6 +19,7 @@ import Observation
     var lastResult = ""
     var sessionState = ""
     var frameCount = 0
+    var streamState: StreamState?
     var previewImage: UIImage?
 
     @ObservationIgnored private let decoder = FrameDecoder()
@@ -140,6 +141,7 @@ import Observation
             camera.stream.statePublisher.listen { state in
                 Task { @MainActor in
                     self.status = "Stream: \(state)"
+                    self.streamState = state
                     // Stream died on its own (critical error, hinges, thermal): reset so
                     // Start works again. It can report stopped before ever starting.
                     if state == .streaming { wasStreaming = true }
@@ -175,6 +177,8 @@ import Observation
         session?.stop()
         session = nil
         isStreaming = false
+        streamState = nil
+        previewImage = nil
     }
 
     /// Full-quality still, taken while the video keeps streaming. The JPEG arrives
