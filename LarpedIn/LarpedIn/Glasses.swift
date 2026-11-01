@@ -1,4 +1,5 @@
 import AVFoundation
+import UIKit
 import MWDATCamera
 import MWDATCore
 import MWDATInputs
@@ -16,8 +17,11 @@ import Observation
     var streamError = ""
     var buttonStatus = ""
     var lastResult = ""
+    var sessionState = ""
+    var frameCount = 0
+    var previewImage: UIImage?
 
-    @ObservationIgnored let previewLayer = AVSampleBufferDisplayLayer()
+    @ObservationIgnored private let decoder = FrameDecoder()
     /// Long-lived: it fills in from `devicesStream()` asynchronously, so a fresh
     /// one created at tap time has no device yet and the session fails.
     @ObservationIgnored private let deviceSelector = AutoDeviceSelector(wearables: Wearables.shared)
@@ -75,6 +79,13 @@ import Observation
             let session = try wearables.createSession(deviceSelector: deviceSelector)
             self.session = session
             isStreaming = true
+            frameCount = 0
+            session.statePublisher.listen { state in
+                Task { @MainActor in self.sessionState = "\(state)" }
+            }.store(in: tokens)
+            session.errorPublisher.listen { error in
+                Task { @MainActor in self.streamError = "Session: \(error.localizedDescription) (\(error))" }
+            }.store(in: tokens)
             try session.start()
             for await state in session.stateStream() where state == .started { break }
 
@@ -87,15 +98,15 @@ import Observation
             }
 
             let buffer = buffer
-            let renderer = previewLayer.sampleBufferRenderer
+            let decoder = decoder
             camera.stream.videoFramePublisher.listen { frame in
                 let sample = frame.sampleBuffer
                 buffer.append(sample)
-                if let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: true) as? [NSMutableDictionary] {
-                    attachments.first?[kCMSampleAttachmentKey_DisplayImmediately] = true
+                let image = decoder.decode(sample)
+                Task { @MainActor in
+                    self.frameCount += 1
+                    if let image { self.previewImage = image }
                 }
-                if renderer.status == .failed { renderer.flush() }
-                renderer.enqueue(sample)
             }.store(in: tokens)
             var wasStreaming = false
             camera.stream.statePublisher.listen { state in

@@ -1,4 +1,3 @@
-import AVFoundation
 import SwiftUI
 
 struct ContentView: View {
@@ -8,12 +7,20 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            Preview(layer: glasses.previewLayer)
+            Color.black
                 .aspectRatio(9 / 16, contentMode: .fit)
-                .background(.black)
+                .overlay {
+                    if let image = glasses.previewImage {
+                        Image(uiImage: image).resizable().scaledToFit()
+                    }
+                }
                 .clipShape(.rect(cornerRadius: 12))
 
             Text(glasses.status).font(.caption)
+            if glasses.isStreaming {
+                Text("Session: \(glasses.sessionState) · \(glasses.frameCount) frames")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             if !glasses.streamError.isEmpty {
                 Text(glasses.streamError).font(.caption).foregroundStyle(.red)
             }
@@ -52,30 +59,5 @@ struct ContentView: View {
         }
         .padding()
         .onOpenURL { url in Task { await glasses.handle(url) } }
-    }
-}
-
-private struct Preview: UIViewRepresentable {
-    let layer: AVSampleBufferDisplayLayer
-
-    func makeUIView(context: Context) -> LayerView { LayerView(previewLayer: layer) }
-    func updateUIView(_ view: LayerView, context: Context) {}
-
-    final class LayerView: UIView {
-        private let previewLayer: AVSampleBufferDisplayLayer
-
-        init(previewLayer: AVSampleBufferDisplayLayer) {
-            self.previewLayer = previewLayer
-            super.init(frame: .zero)
-            previewLayer.videoGravity = .resizeAspect
-            layer.addSublayer(previewLayer)
-        }
-
-        required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
-
-        override func layoutSubviews() {
-            super.layoutSubviews()
-            previewLayer.frame = bounds
-        }
     }
 }
