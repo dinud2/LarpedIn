@@ -1,3 +1,4 @@
+import ActivityKit
 import AVFoundation
 import UIKit
 import MWDATCamera
@@ -17,6 +18,7 @@ import Observation
     var streamError = ""
     var buttonStatus = ""
     var lastResult = ""
+    var liveActivityStatus = "Not started"
     var sessionState = ""
     var frameCount = 0
     var streamState: StreamState?
@@ -33,8 +35,17 @@ import Observation
     @ObservationIgnored private var stream: MWDATCamera.Stream?
     @ObservationIgnored private var inputTask: Task<Void, Never>?
     @ObservationIgnored private var autoStartTask: Task<Void, Never>?
+    @ObservationIgnored private var activity: Activity<ClipActivityAttributes>?
+    @ObservationIgnored private var clipCount = 0
 
     init() {
+        // iOS only lets an app start a Live Activity while it's on screen, so retry
+        // whenever it comes back if streaming started in the background.
+        Task {
+            for await _ in NotificationCenter.default.notifications(named: UIApplication.didBecomeActiveNotification) {
+                if isStreaming { startActivity() }
+            }
+        }
         Task {
             for await state in Wearables.shared.registrationStateStream() {
                 let wasRegistered = isRegistered
@@ -162,6 +173,7 @@ import Observation
                 buttonStatus = "Glasses button off"
             }
             camera.stream.start()
+            startActivity()
         } catch {
             status = error.localizedDescription
             stop()
@@ -179,6 +191,9 @@ import Observation
         isStreaming = false
         streamState = nil
         previewImage = nil
+        let ending = activity
+        activity = nil
+        Task { await ending?.end(nil, dismissalPolicy: .immediate) }
     }
 
     /// Full-quality still, taken while the video keeps streaming. The JPEG arrives
@@ -192,22 +207,95 @@ import Observation
     }
 
     func clip() async {
+        startActivity()
+        clipCount += 1
+        let thisClip = clipCount
+        await showInActivity(.init(phase: .clipping))
         do {
             lastResult = "Writing clip…"
             let (file, hasAudio) = try await buffer.writeClip()
             defer { try? FileManager.default.removeItem(at: file) }
-            await upload(try Data(contentsOf: file), to: "api/clip", contentType: "video/mp4", label: hasAudio ? "clip" : "clip (no audio)")
+            await showInActivity(.init(phase: .writing))
+            let label = hasAudio ? "clip" : "clip (no audio)"
+            guard let reply = await upload(try Data(contentsOf: file), to: "api/clip", contentType: "video/mp4", label: label) else {
+                return await showResult(.init(phase: .failed, detail: lastResult), of: thisClip)
+            }
+            await showResult(outcome(of: reply), of: thisClip)
         } catch {
             lastResult = "Clip failed: \(error)"
+            await showResult(.init(phase: .failed, detail: error.localizedDescription), of: thisClip)
         }
     }
 
+    /// One Live Activity per streaming session; clips update it. Starting one only works
+    /// while the app is on screen, but updates work from the background, which is what
+    /// lets glasses-button clips show up with the phone locked.
+    private func startActivity() {
+        if activity?.activityState == .active { return }
+        guard ActivityAuthorizationInfo().areActivitiesEnabled else {
+            liveActivityStatus = "Off in iOS Settings"
+            return
+        }
+        do {
+            activity = try Activity.request(
+                attributes: ClipActivityAttributes(),
+                content: ActivityContent(state: .init(phase: .live), staleDate: nil)
+            )
+            liveActivityStatus = "Running"
+        } catch {
+            // Not fatal: clips still work without the Live Activity.
+            liveActivityStatus = "Couldn't start: \(error.localizedDescription)"
+        }
+    }
+
+    private func showInActivity(_ state: ClipActivityAttributes.ContentState) async {
+        await activity?.update(ActivityContent(state: state, staleDate: nil))
+    }
+
+    /// Shows a clip's result for a minute, then goes back to the streaming state
+    /// unless a newer clip has taken over.
+    private func showResult(_ state: ClipActivityAttributes.ContentState, of clip: Int) async {
+        await showInActivity(state)
+        Task {
+            try? await Task.sleep(for: .seconds(60))
+            guard clip == clipCount, isStreaming else { return }
+            await showInActivity(.init(phase: .live))
+        }
+    }
+
+    /// Reads the backend's reply to tell a published post from a saved draft.
+    private func outcome(of reply: Data) -> ClipActivityAttributes.ContentState {
+        struct Reply: Decodable {
+            struct Draft: Decodable {
+                let status: String
+                let postUrl: URL?
+            }
+            let post: String?
+            let draft: Draft?
+            let publishError: String?
+        }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        guard let parsed = try? decoder.decode(Reply.self, from: reply) else {
+            return .init(phase: .drafted, detail: "Sent, but the server's reply couldn't be read")
+        }
+        let firstLine = parsed.post?.split(separator: "\n").first.map(String.init) ?? ""
+        if parsed.draft?.status == "published" {
+            lastResult = "Posted to LinkedIn"
+            return .init(phase: .posted, detail: firstLine, postURL: parsed.draft?.postUrl)
+        }
+        lastResult = parsed.publishError.map { "Saved as draft: \($0)" } ?? "Saved as draft"
+        return .init(phase: .drafted, detail: parsed.publishError ?? firstLine)
+    }
+
     /// POSTs to `<server>/<path>`, where the server is the base URL typed into the app.
-    private func upload(_ body: Data, to path: String, contentType: String, label: String) async {
+    /// Returns the reply body on success, nil on failure (with `lastResult` explaining why).
+    @discardableResult
+    private func upload(_ body: Data, to path: String, contentType: String, label: String) async -> Data? {
         let server = UserDefaults.standard.string(forKey: "endpoint")?.trimmingCharacters(in: .whitespaces) ?? ""
         guard let base = URL(string: server), base.scheme?.hasPrefix("http") == true, base.host() != nil else {
             lastResult = "Set the server URL first, e.g. https://example.com"
-            return
+            return nil
         }
         isSending = true
         defer { isSending = false }
@@ -217,15 +305,17 @@ import Observation
         request.httpMethod = "POST"
         request.setValue(contentType, forHTTPHeaderField: "Content-Type")
         do {
-            let (_, response) = try await URLSession.shared.upload(for: request, from: body)
+            let (reply, response) = try await URLSession.shared.upload(for: request, from: body)
             let code = (response as? HTTPURLResponse)?.statusCode ?? 0
             guard (200..<300).contains(code) else {
                 lastResult = "\(label) upload failed (HTTP \(code))"
-                return
+                return nil
             }
             lastResult = "Sent \(label) (HTTP \(code))"
+            return reply
         } catch {
             lastResult = "\(label) upload failed: \(error.localizedDescription)"
+            return nil
         }
     }
 

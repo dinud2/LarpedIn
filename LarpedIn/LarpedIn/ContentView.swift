@@ -6,6 +6,7 @@ struct ContentView: View {
     @State private var showSettings = false
     @State private var clipTaps = 0
     @State private var photoTaps = 0
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         VStack(spacing: 16) {
@@ -21,7 +22,22 @@ struct ContentView: View {
         .sheet(isPresented: $showSettings) { SettingsView(glasses: glasses) }
         .sensoryFeedback(.impact(weight: .heavy), trigger: clipTaps)
         .sensoryFeedback(.impact(weight: .light), trigger: photoTaps)
-        .onOpenURL { url in Task { await glasses.handle(url) } }
+        .onOpenURL { url in
+            if let post = linkedInPost(from: url) { return openURL(post) }
+            Task { await glasses.handle(url) }
+        }
+    }
+
+    /// `larpedin://post?url=…` from the Live Activity's "View post" button. Only LinkedIn
+    /// URLs are forwarded, since any app or webpage can open a larpedin:// link.
+    private func linkedInPost(from url: URL) -> URL? {
+        guard url.scheme == "larpedin", url.host() == "post",
+            let value = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?.first(where: { $0.name == "url" })?.value,
+            let post = URL(string: value), post.scheme == "https",
+            let host = post.host(), host == "linkedin.com" || host.hasSuffix(".linkedin.com")
+        else { return nil }
+        return post
     }
 
     // MARK: Header
@@ -252,6 +268,7 @@ private struct SettingsView: View {
                     LabeledContent("Stream", value: glasses.status)
                     LabeledContent("Session", value: glasses.sessionState.isEmpty ? "–" : glasses.sessionState)
                     LabeledContent("Frames", value: "\(glasses.frameCount)")
+                    LabeledContent("Live Activity", value: glasses.liveActivityStatus)
                     if !glasses.buttonStatus.isEmpty {
                         LabeledContent("Capture button", value: glasses.buttonStatus)
                     }
