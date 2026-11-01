@@ -1,8 +1,9 @@
 import AVFoundation
 import Synchronization
 
-/// Rolling window of compressed HEVC frames. Always starts on a keyframe so the
-/// clip decodes, which means it holds `seconds` plus up to one GOP.
+/// Rolling window of compressed HEVC frames plus the glasses' PCM audio. Video always
+/// starts on a keyframe so the clip decodes, which means it holds `seconds` plus up
+/// to one GOP; audio is trimmed to the video's range when written.
 nonisolated final class ClipBuffer: Sendable {
     private struct Frame {
         let sample: CMSampleBuffer
@@ -10,8 +11,14 @@ nonisolated final class ClipBuffer: Sendable {
         let isKeyframe: Bool
     }
 
+    private struct AudioChunk {
+        let buffer: AVAudioPCMBuffer
+        let pts: CMTime
+    }
+
     private let seconds: Double
     private let frames = Mutex<[Frame]>([])
+    private let audio = Mutex<[AudioChunk]>([])
 
     init(seconds: Double) {
         self.seconds = seconds
@@ -36,19 +43,44 @@ nonisolated final class ClipBuffer: Sendable {
         }
     }
 
-    /// Writes the current window to an mp4 without re-encoding.
-    func writeClip() async throws -> URL {
+    func appendAudio(_ sdkBuffer: AVAudioPCMBuffer, pts: CMTime) {
+        guard let buffer = sdkBuffer.copy() else { return }
+        audio.withLock { chunks in
+            chunks.append(AudioChunk(buffer: buffer, pts: pts))
+            // Generous margin: writeClip trims to the video's actual start.
+            while let oldest = chunks.first, (pts - oldest.pts).seconds > seconds + 5 {
+                chunks.removeFirst()
+            }
+        }
+    }
+
+    /// Writes the current window to an mp4: video passed through, audio encoded to AAC.
+    /// `hasAudio` is false when no audio overlapped the video window.
+    func writeClip() async throws -> (url: URL, hasAudio: Bool) {
         let snapshot = frames.withLock { $0 }
-        guard let first = snapshot.first,
+        guard let first = snapshot.first, let last = snapshot.last,
             let format = CMSampleBufferGetFormatDescription(first.sample)
         else { throw ClipError.empty }
+        let audioChunks = audio.withLock { $0 }.filter { $0.pts >= first.pts && $0.pts <= last.pts }
 
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("clip-\(UUID()).mp4")
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: nil, sourceFormatHint: format)
         writer.add(input)
+        var audioInput: AVAssetWriterInput?
+        if let pcmFormat = audioChunks.first?.buffer.format {
+            let aac = AVAssetWriterInput(mediaType: .audio, outputSettings: [
+                AVFormatIDKey: kAudioFormatMPEG4AAC,
+                AVSampleRateKey: pcmFormat.sampleRate,
+                AVNumberOfChannelsKey: pcmFormat.channelCount,
+            ])
+            writer.add(aac)
+            audioInput = aac
+        }
         guard writer.startWriting() else { throw writer.error ?? ClipError.empty }
         writer.startSession(atSourceTime: .zero)
+
+        var videoSamples: [CMSampleBuffer] = []
 
         // SDK frames can lack durations and sync flags; without them the mp4 has no
         // seekable timeline or keyframe index.
@@ -76,14 +108,40 @@ nonisolated final class ClipBuffer: Sendable {
                 dict[kCMSampleAttachmentKey_NotSync] = !frame.isKeyframe
                 dict[kCMSampleAttachmentKey_DependsOnOthers] = !frame.isKeyframe
             }
-            while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(5)) }
-            input.append(retimed)
+            videoSamples.append(retimed)
+        }
+        var tracks = [(input: input, samples: videoSamples[...])]
+        if let audioInput {
+            let audioSamples = audioChunks.compactMap { $0.buffer.sampleBuffer(pts: $0.pts - first.pts) }
+            tracks.append((audioInput, audioSamples[...]))
         }
 
-        input.markAsFinished()
+        // AVAssetWriter interleaves: an input that's ahead in time reports not-ready
+        // until the other catches up or is marked finished. So feed tracks in turn and
+        // finish each the moment it runs dry. A failed writer is also not-ready forever.
+        var finished = Set<Int>()
+        while finished.count < tracks.count {
+            var progressed = false
+            for i in tracks.indices where !finished.contains(i) {
+                while tracks[i].input.isReadyForMoreMediaData, let sample = tracks[i].samples.first {
+                    guard tracks[i].input.append(sample) else { throw writer.error ?? ClipError.empty }
+                    tracks[i].samples.removeFirst()
+                    progressed = true
+                }
+                if tracks[i].samples.isEmpty {
+                    tracks[i].input.markAsFinished()
+                    finished.insert(i)
+                    progressed = true
+                }
+            }
+            if !progressed {
+                guard writer.status == .writing else { throw writer.error ?? ClipError.empty }
+                try await Task.sleep(for: .milliseconds(5))
+            }
+        }
         await writer.finishWriting()
         guard writer.status == .completed else { throw writer.error ?? ClipError.empty }
-        return url
+        return (url, audioInput != nil)
     }
 }
 
@@ -147,5 +205,48 @@ extension CMSampleBuffer {
             offset += length
         }
         return false
+    }
+}
+
+extension AVAudioPCMBuffer {
+    /// Our own copy; the SDK says not to hold or modify the buffers it delivers.
+    nonisolated func copy() -> AVAudioPCMBuffer? {
+        guard let copy = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameLength) else { return nil }
+        copy.frameLength = frameLength
+        let source = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: audioBufferList))
+        let destination = UnsafeMutableAudioBufferListPointer(copy.mutableAudioBufferList)
+        for (from, to) in zip(source, destination) {
+            guard let fromData = from.mData, let toData = to.mData else { return nil }
+            memcpy(toData, fromData, Int(from.mDataByteSize))
+        }
+        return copy
+    }
+
+    /// Wraps the PCM in a CMSampleBuffer so AVAssetWriter can encode it.
+    nonisolated func sampleBuffer(pts: CMTime) -> CMSampleBuffer? {
+        var description: CMAudioFormatDescription?
+        CMAudioFormatDescriptionCreate(
+            allocator: nil, asbd: format.streamDescription, layoutSize: 0, layout: nil,
+            magicCookieSize: 0, magicCookie: nil, extensions: nil, formatDescriptionOut: &description
+        )
+        guard let description else { return nil }
+        var timing = CMSampleTimingInfo(
+            duration: CMTime(value: 1, timescale: CMTimeScale(format.sampleRate)),
+            presentationTimeStamp: pts, decodeTimeStamp: .invalid
+        )
+        var sample: CMSampleBuffer?
+        CMSampleBufferCreate(
+            allocator: nil, dataBuffer: nil, dataReady: false, makeDataReadyCallback: nil, refcon: nil,
+            formatDescription: description, sampleCount: CMItemCount(frameLength),
+            sampleTimingEntryCount: 1, sampleTimingArray: &timing,
+            sampleSizeEntryCount: 0, sampleSizeArray: nil, sampleBufferOut: &sample
+        )
+        guard let sample,
+            CMSampleBufferSetDataBufferFromAudioBufferList(
+                sample, blockBufferAllocator: nil, blockBufferMemoryAllocator: nil, flags: 0,
+                bufferList: audioBufferList
+            ) == noErr
+        else { return nil }
+        return sample
     }
 }

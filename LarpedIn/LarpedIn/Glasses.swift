@@ -1,4 +1,5 @@
 import AVFoundation
+import UIKit
 import MWDATCamera
 import MWDATCore
 import MWDATInputs
@@ -16,8 +17,11 @@ import Observation
     var streamError = ""
     var buttonStatus = ""
     var lastResult = ""
+    var sessionState = ""
+    var frameCount = 0
+    var previewImage: UIImage?
 
-    @ObservationIgnored let previewLayer = AVSampleBufferDisplayLayer()
+    @ObservationIgnored private let decoder = FrameDecoder()
     /// Long-lived: it fills in from `devicesStream()` asynchronously, so a fresh
     /// one created at tap time has no device yet and the session fails.
     @ObservationIgnored private let deviceSelector = AutoDeviceSelector(wearables: Wearables.shared)
@@ -70,32 +74,51 @@ import Observation
                     return
                 }
             }
+            // Audio is optional: without the mic permission we still stream video.
+            var hasMic = (try? await wearables.checkPermissionStatus(.microphone)) == .granted
+            if !hasMic { hasMic = (try? await wearables.requestPermission(.microphone)) == .granted }
             status = "Connecting…"
             streamError = ""
             let session = try wearables.createSession(deviceSelector: deviceSelector)
             self.session = session
             isStreaming = true
+            frameCount = 0
+            session.statePublisher.listen { state in
+                Task { @MainActor in self.sessionState = "\(state)" }
+            }.store(in: tokens)
+            session.errorPublisher.listen { error in
+                Task { @MainActor in self.streamError = "Session: \(error.localizedDescription) (\(error))" }
+            }.store(in: tokens)
             try session.start()
             for await state in session.stateStream() where state == .started { break }
 
             // hvc1 keeps frames compressed (cheap to buffer, written to mp4 as-is) and
-            // keeps streaming while the app is backgrounded, unlike raw.
-            let config = StreamConfiguration(videoCodec: .hvc1, resolution: .low, frameRate: 24)
+            // keeps streaming while the app is backgrounded, unlike raw. 16kHz mono is
+            // plenty for speech and barely costs Bluetooth bandwidth.
+            let config = StreamConfiguration(
+                videoCodec: .hvc1,
+                audioCodec: hasMic ? .pcm(sampleRate: .rate16000, numberOfChannels: 1) : nil,
+                resolution: .low,
+                frameRate: 24
+            )
             guard let camera = try session.addCamera(config: config) else {
                 status = "Couldn't attach camera"
                 return stop()
             }
 
             let buffer = buffer
-            let renderer = previewLayer.sampleBufferRenderer
+            let decoder = decoder
             camera.stream.videoFramePublisher.listen { frame in
                 let sample = frame.sampleBuffer
                 buffer.append(sample)
-                if let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: true) as? [NSMutableDictionary] {
-                    attachments.first?[kCMSampleAttachmentKey_DisplayImmediately] = true
+                let image = decoder.decode(sample)
+                Task { @MainActor in
+                    self.frameCount += 1
+                    if let image { self.previewImage = image }
                 }
-                if renderer.status == .failed { renderer.flush() }
-                renderer.enqueue(sample)
+            }.store(in: tokens)
+            camera.stream.audioFramePublisher.listen { frame in
+                buffer.appendAudio(frame.pcmBuffer, pts: frame.presentationTimeStamp)
             }.store(in: tokens)
             var wasStreaming = false
             camera.stream.statePublisher.listen { state in
@@ -150,11 +173,12 @@ import Observation
 
     func clip() async {
         do {
-            let file = try await buffer.writeClip()
+            lastResult = "Writing clip…"
+            let (file, hasAudio) = try await buffer.writeClip()
             defer { try? FileManager.default.removeItem(at: file) }
-            await upload(try Data(contentsOf: file), contentType: "video/mp4", label: "clip")
+            await upload(try Data(contentsOf: file), contentType: "video/mp4", label: hasAudio ? "clip" : "clip (no audio)")
         } catch {
-            lastResult = "Clip failed: \(error.localizedDescription)"
+            lastResult = "Clip failed: \(error)"
         }
     }
 
