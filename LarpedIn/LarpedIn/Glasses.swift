@@ -98,7 +98,7 @@ import Observation
             let config = StreamConfiguration(
                 videoCodec: .hvc1,
                 audioCodec: hasMic ? .pcm(sampleRate: .rate16000, numberOfChannels: 1) : nil,
-                resolution: .low,
+                resolution: .medium,
                 frameRate: 24
             )
             guard let camera = try session.addCamera(config: config) else {
