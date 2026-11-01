@@ -19,7 +19,12 @@ Also pick the single frame that would make the best image for the post: sharp, w
 
 Reply with only JSON: {"post": "<the post>", "frame": <frame number>}`;
 
-const Reply = z.object({ post: z.string(), frame: z.number().int() });
+// The post is what matters; a missing or garbled frame pick (models occasionally
+// drop the field or send "5") falls back to the middle frame instead of failing.
+const Reply = z.object({
+	post: z.string(),
+	frame: z.coerce.number().int().catch(0),
+});
 
 /** Writes the post and picks which frame (0-based index) to use as its image. */
 export async function writePost(
@@ -46,6 +51,11 @@ export async function writePost(
 	const { post, frame } = Reply.parse(
 		JSON.parse(reply.slice(reply.indexOf("{"), reply.lastIndexOf("}") + 1)),
 	);
-	const frameIndex = Math.min(Math.max(frame - 1, 0), frames.length - 1);
+	if (frame < 1)
+		console.warn("model didn't pick a frame, using the middle one");
+	const frameIndex =
+		frame < 1
+			? Math.floor(frames.length / 2)
+			: Math.min(frame - 1, frames.length - 1);
 	return { post: post.trim(), frameIndex };
 }
