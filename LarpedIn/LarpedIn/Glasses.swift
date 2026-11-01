@@ -197,11 +197,33 @@ import Observation
         request.httpMethod = "POST"
         request.setValue(contentType, forHTTPHeaderField: "Content-Type")
         do {
-            let (_, response) = try await URLSession.shared.upload(for: request, from: body)
+            let (reply, response) = try await URLSession.shared.upload(for: request, from: body)
             let code = (response as? HTTPURLResponse)?.statusCode ?? 0
-            lastResult = (200..<300).contains(code) ? "Sent \(label) (HTTP \(code))" : "\(label) upload failed (HTTP \(code))"
+            guard (200..<300).contains(code) else {
+                lastResult = "\(label) upload failed (HTTP \(code))"
+                return
+            }
+            lastResult = "Sent \(label) (HTTP \(code))"
+            await forward(reply, contentType: (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type"))
         } catch {
             lastResult = "\(label) upload failed: \(error.localizedDescription)"
+        }
+    }
+
+    /// Testing hook: relays the backend's reply (the generated post) to the forward
+    /// URL, e.g. webhook.site, until the real LinkedIn draft API exists.
+    private func forward(_ reply: Data, contentType: String?) async {
+        let target = UserDefaults.standard.string(forKey: "forwardURL")?.trimmingCharacters(in: .whitespaces) ?? ""
+        guard let url = URL(string: target), url.scheme?.hasPrefix("http") == true else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue(contentType ?? "application/json", forHTTPHeaderField: "Content-Type")
+        do {
+            let (_, response) = try await URLSession.shared.upload(for: request, from: reply)
+            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            lastResult += (200..<300).contains(code) ? ", forwarded" : ", forward failed (HTTP \(code))"
+        } catch {
+            lastResult += ", forward failed: \(error.localizedDescription)"
         }
     }
 
