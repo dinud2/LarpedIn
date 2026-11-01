@@ -131,7 +131,7 @@ import Observation
                 }
             }.store(in: tokens)
             camera.stream.photoDataPublisher.listen { photo in
-                Task { @MainActor in await self.upload(photo.data, contentType: "image/jpeg", label: "photo") }
+                Task { @MainActor in await self.upload(photo.data, to: "api/photo", contentType: "image/jpeg", label: "photo") }
             }.store(in: tokens)
             camera.stream.errorPublisher.listen { error in
                 Task { @MainActor in self.streamError = "\(error.localizedDescription) (\(error))" }
@@ -176,22 +176,24 @@ import Observation
             lastResult = "Writing clip…"
             let (file, hasAudio) = try await buffer.writeClip()
             defer { try? FileManager.default.removeItem(at: file) }
-            await upload(try Data(contentsOf: file), contentType: "video/mp4", label: hasAudio ? "clip" : "clip (no audio)")
+            await upload(try Data(contentsOf: file), to: "api/clip", contentType: "video/mp4", label: hasAudio ? "clip" : "clip (no audio)")
         } catch {
             lastResult = "Clip failed: \(error)"
         }
     }
 
-    private func upload(_ body: Data, contentType: String, label: String) async {
-        guard let endpoint = URL(string: UserDefaults.standard.string(forKey: "endpoint") ?? ""),
-            endpoint.scheme?.hasPrefix("http") == true
-        else {
-            lastResult = "Set an upload URL first"
+    /// POSTs to `<server>/<path>`, where the server is the base URL typed into the app.
+    private func upload(_ body: Data, to path: String, contentType: String, label: String) async {
+        let server = UserDefaults.standard.string(forKey: "endpoint")?.trimmingCharacters(in: .whitespaces) ?? ""
+        guard let base = URL(string: server), base.scheme?.hasPrefix("http") == true, base.host() != nil else {
+            lastResult = "Set the server URL first, e.g. https://example.com"
             return
         }
         isSending = true
         defer { isSending = false }
-        var request = URLRequest(url: endpoint)
+        var request = URLRequest(url: base.appending(path: path))
+        // The backend transcribes and runs two model calls before answering.
+        request.timeoutInterval = 120
         request.httpMethod = "POST"
         request.setValue(contentType, forHTTPHeaderField: "Content-Type")
         do {

@@ -28,7 +28,7 @@ struct ContentView: View {
                 Text(glasses.buttonStatus).font(.caption).foregroundStyle(.secondary)
             }
 
-            TextField("Upload URL", text: $endpoint)
+            TextField("Server URL, e.g. https://example.com", text: $endpoint)
                 .textFieldStyle(.roundedBorder)
                 .keyboardType(.URL)
                 .textInputAutocapitalization(.never)
