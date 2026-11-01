@@ -8,7 +8,7 @@ import Observation
 
 /// Owns the glasses connection: streams HEVC into a 10s ring buffer. On the glasses
 /// capture button (or in-app buttons), a short press uploads a photo and a hold
-/// uploads the last 10s as an mp4.
+/// uploads the last few seconds (the clip length setting) as an mp4.
 @Observable final class Glasses {
     var isRegistered = false
     var hasDevice = false
@@ -28,7 +28,8 @@ import Observation
     /// Long-lived: it fills in from `devicesStream()` asynchronously, so a fresh
     /// one created at tap time has no device yet and the session fails.
     @ObservationIgnored private let deviceSelector = AutoDeviceSelector(wearables: Wearables.shared)
-    @ObservationIgnored private let buffer = ClipBuffer(seconds: 10)
+    /// Holds the longest clip length; each clip cuts the chosen length from it.
+    @ObservationIgnored private let buffer = ClipBuffer(seconds: 30)
     @ObservationIgnored private let tokens = ListenerTokenBag()
     @ObservationIgnored private var session: DeviceSession?
     @ObservationIgnored private var inputs: Inputs?
@@ -210,10 +211,12 @@ import Observation
         startActivity()
         clipCount += 1
         let thisClip = clipCount
-        await showInActivity(.init(phase: .clipping))
+        let clipLength = Int(UserDefaults.standard.object(forKey: "clipSeconds") as? Double ?? 10)
+        await showInActivity(.init(phase: .clipping, detail: "Last \(clipLength) seconds"))
         do {
             lastResult = "Writing clip…"
-            let (file, hasAudio) = try await buffer.writeClip()
+            let seconds = UserDefaults.standard.object(forKey: "clipSeconds") as? Double ?? 10
+            let (file, hasAudio) = try await buffer.writeClip(seconds: seconds)
             defer { try? FileManager.default.removeItem(at: file) }
             await showInActivity(.init(phase: .writing))
             let label = hasAudio ? "clip" : "clip (no audio)"

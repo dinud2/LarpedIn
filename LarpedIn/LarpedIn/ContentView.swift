@@ -7,6 +7,7 @@ struct ContentView: View {
     @State private var clipTaps = 0
     @State private var photoTaps = 0
     @Environment(\.openURL) private var openURL
+    @AppStorage("clipSeconds") private var clipSeconds = 10.0
 
     var body: some View {
         VStack(spacing: 16) {
@@ -177,6 +178,7 @@ struct ContentView: View {
         if !glasses.isRegistered {
             wideButton("Connect to Meta AI", systemImage: "link") { Task { await glasses.register() } }
         } else if glasses.isStreaming {
+            clipLengthSlider
             // Grid keeps the three buttons centred on one row and the labels on the next.
             Grid(horizontalSpacing: 40, verticalSpacing: 8) {
                 GridRow {
@@ -200,7 +202,7 @@ struct ContentView: View {
                 }
                 GridRow {
                     Text("Stop").foregroundStyle(.secondary)
-                    Text("Clip 10s")
+                    Text("Clip \(Int(clipSeconds))s")
                     Text("Photo").foregroundStyle(.secondary)
                 }
                 .font(.caption.weight(.medium))
@@ -212,6 +214,18 @@ struct ContentView: View {
             }
             .disabled(!glasses.hasDevice)
         }
+    }
+
+    private var clipLengthSlider: some View {
+        HStack(spacing: 12) {
+            Text("Clip length").font(.footnote.weight(.medium)).foregroundStyle(.secondary)
+            Slider(value: $clipSeconds, in: 5...30, step: 5)
+                .tint(.white)
+            Text("\(Int(clipSeconds))s")
+                .font(.footnote.weight(.semibold).monospacedDigit())
+                .frame(width: 32, alignment: .trailing)
+        }
+        .sensoryFeedback(.selection, trigger: clipSeconds)
     }
 
     private func wideButton(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
@@ -261,7 +275,7 @@ private struct SettingsView: View {
                 } header: {
                     Text("Glasses")
                 } footer: {
-                    Text("Short press takes a photo, hold clips the last 10 seconds. Applies the next time streaming starts.")
+                    Text("Short press takes a photo, hold clips using the clip length on the main screen. Applies the next time streaming starts.")
                 }
 
                 Section("Diagnostics") {

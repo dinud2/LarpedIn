@@ -90,7 +90,7 @@ private extension ClipActivityAttributes.ContentState.Phase {
     var title: String {
         switch self {
         case .live: "Streaming"
-        case .clipping: "Clipping the last 10s"
+        case .clipping: "Clipping"
         case .writing: "Writing your post…"
         case .posted: "Posted to LinkedIn"
         case .drafted: "Saved as draft"

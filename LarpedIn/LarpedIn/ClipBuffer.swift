@@ -1,9 +1,9 @@
 import AVFoundation
 import Synchronization
 
-/// Rolling window of compressed HEVC frames plus the glasses' PCM audio. Video always
-/// starts on a keyframe so the clip decodes, which means it holds `seconds` plus up
-/// to one GOP; audio is trimmed to the video's range when written.
+/// Rolling window of compressed HEVC frames plus the glasses' PCM audio, holding the
+/// longest clip length so any shorter clip can be cut from it after the fact. Clips
+/// always start on a keyframe so they decode; audio is trimmed to the video's range.
 nonisolated final class ClipBuffer: Sendable {
     private struct Frame {
         let sample: CMSampleBuffer
@@ -54,10 +54,15 @@ nonisolated final class ClipBuffer: Sendable {
         }
     }
 
-    /// Writes the current window to an mp4: video passed through, audio encoded to AAC.
-    /// `hasAudio` is false when no audio overlapped the video window.
-    func writeClip() async throws -> (url: URL, hasAudio: Bool) {
-        let snapshot = frames.withLock { $0 }
+    /// Writes the last `clipSeconds` (rounded back to a keyframe) to an mp4: video passed
+    /// through, audio encoded to AAC. `hasAudio` is false when no audio overlapped it.
+    func writeClip(seconds clipSeconds: Double) async throws -> (url: URL, hasAudio: Bool) {
+        let buffered = frames.withLock { $0 }
+        guard let latest = buffered.last else { throw ClipError.empty }
+        // Latest keyframe that still gives at least the requested length; if the buffer
+        // is shorter than that, take all of it.
+        let start = buffered.lastIndex { $0.isKeyframe && (latest.pts - $0.pts).seconds >= clipSeconds } ?? 0
+        let snapshot = buffered[start...]
         guard let first = snapshot.first, let last = snapshot.last,
             let format = CMSampleBufferGetFormatDescription(first.sample)
         else { throw ClipError.empty }
