@@ -9,7 +9,7 @@ const run = promisify(execFile);
 /** Pulls `count` evenly spaced JPEG frames out of the video, as base64. */
 export async function extractFrames(
 	videoPath: string,
-	count = 16,
+	count = 32,
 ): Promise<string[]> {
 	const { stdout } = await run("ffprobe", [
 		"-v",

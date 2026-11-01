@@ -11,7 +11,7 @@ Turns a glasses clip into a LinkedIn post. TanStack Start API routes, built with
   { "post": "...", "transcript": "...", "image": "data:image/jpeg;base64,..." }
   ```
 
-  Pipeline: ffmpeg pulls 16 frames and a mono mp3. The mp3 goes to an audio-capable OpenRouter model for the transcript (in parallel with frame extraction), then the frames and transcript go to the post model, which writes the post and picks the best frame as `image`.
+  Pipeline: ffmpeg pulls 32 frames and a mono mp3. The mp3 goes to an audio-capable OpenRouter model for the transcript (in parallel with frame extraction), then the frames and transcript go to the post model, which writes the post and picks the best frame as `image`.
 
   The response also includes `draft`: the post and the picked frame are copied into a
   persistent local LinkedIn draft. The original `post`, `transcript`, and `image` fields
